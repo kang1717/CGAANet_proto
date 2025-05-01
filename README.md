@@ -31,6 +31,9 @@ model:
         - ['IntraGrainForce', 'RMSE']
 ```
 
+Here, grain_atom_counts is the number of atoms in grains.
+
+
 ## Preparation of the training set
 Example:
 ```python
