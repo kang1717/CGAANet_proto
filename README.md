@@ -46,7 +46,7 @@ You have to include grain_num, grain_type, and intra_grain_sequence tag in the e
 
 - grain_num: index for grain (start from 0)
 - grain_type: index for grain types (should be start from 1)
-- intra_grain_sequence: ㅔredefined order for grain embeddings
+- intra_grain_sequence: predefined order for grain embeddings
 
 
 ## ASE Simulator 
