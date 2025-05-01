@@ -22,7 +22,7 @@ cgaanet -m train_v1 input.yaml -s
 
 ### Input details
 
-You have to add below keys, which are not included in the SeveNet code:
+These are the keys that are different from SevenNet.
 
 ```python
 model:
@@ -34,6 +34,7 @@ model:
     error_record:
         - ['IntraGrainForce', 'RMSE']
 ```
+You have to include grain_atom_counts, and IntraGrainForce error recorder.
 
 It is mendatory to write irreps_manual. In addition, the first and last irreps should be a combination of 0e and 1o.
 
