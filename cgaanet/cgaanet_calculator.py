@@ -1,0 +1,204 @@
+import os
+import pathlib
+from typing import Any, Optional, Union
+
+import numpy as np
+import torch
+import torch.jit
+import torch.jit._script
+from ase.calculators.calculator import Calculator, all_changes
+from ase.data import chemical_symbols
+
+import cgaanet._keys as KEY
+import cgaanet.util as util
+from cgaanet.atom_graph_data import AtomGraphData
+from cgaanet.nn.sequential import AtomGraphSequential
+from cgaanet.train.dataload import unlabeled_atoms_to_graph
+
+import time
+
+torch_script_type = torch.jit._script.RecursiveScriptModule
+
+def force_to_ase(data):
+
+    force = data[KEY.TOT_FORCE_PRED].reshape(-1,3)
+    grain_ids = data['grain_atomic_ids'].reshape(-1)
+
+    mask = grain_ids != -1
+
+    force_filtered = force[mask]
+    grain_ids_filtered = grain_ids[mask]
+
+    force_out = torch.empty_like(force_filtered)
+
+    force_out[grain_ids_filtered] = force_filtered
+
+
+    return force_out
+
+class CGAANetCalculator(Calculator):
+    """ASE calculator for CGAANet models
+
+    Multi-GPU parallel MD is not supported for this mode.
+    Use LAMMPS for multi-GPU parallel MD.
+    This class is for convenience who want to run CGAANet models with ase.
+
+    Note than ASE calculator is designed to be interface of other programs.
+    But in this class, we simply run torch model inside ASE calculator.
+    So there is no FileIO things.
+
+    Here, free_energy = energy
+    """
+
+    def __init__(
+        self,
+        model: Union[str, pathlib.PurePath, AtomGraphSequential] = '7net-0',
+        file_type: str = 'checkpoint',
+        device: Union[torch.device, str] = 'auto',
+        cgaanet_config: Optional[Any] = None,  # hold meta information
+        **kwargs,
+    ):
+        """Initialize the calculator
+
+        Args:
+            model (CGAANet): path to the checkpoint file, or pretrained
+            device (str, optional): Torch device to use. Defaults to "auto".
+        """
+        super().__init__(**kwargs)
+        self.cgaanet_config = None
+
+        if isinstance(model, pathlib.PurePath):
+            model = str(model)
+
+        file_type = file_type.lower()
+        if file_type not in ['checkpoint', 'torchscript', 'model_instance']:
+            raise ValueError('file_type should be checkpoint or torchscript')
+
+        if isinstance(device, str):  # TODO: do we really need this?
+            if device == 'auto':
+                self.device = torch.device(
+                    'cuda' if torch.cuda.is_available() else 'cpu'
+                )
+            else:
+                self.device = torch.device(device)
+        else:
+            self.device = device
+
+        if file_type == 'checkpoint' and isinstance(model, str):
+            if os.path.isfile(model):
+                checkpoint = model
+            else:
+                checkpoint = util.pretrained_name_to_path(model)
+            model_loaded, config = util.model_from_checkpoint(checkpoint)
+            model_loaded.set_is_batch_data(False)
+            self.type_map = config[KEY.TYPE_MAP]
+            self.cutoff = config[KEY.CUTOFF]
+            self.cgaanet_config = config
+        elif file_type == 'torchscript' and isinstance(model, str):
+            extra_dict = {
+                'chemical_symbols_to_index': b'',
+                'cutoff': b'',
+                'num_species': b'',
+                'model_type': b'',
+                'version': b'',
+                'dtype': b'',
+                'time': b'',
+            }
+            model_loaded = torch.jit.load(
+                model, _extra_files=extra_dict, map_location=self.device
+            )
+            chem_symbols = extra_dict['chemical_symbols_to_index'].decode('utf-8')
+            sym_to_num = {sym: n for n, sym in enumerate(chemical_symbols)}
+            self.type_map = {
+                sym_to_num[sym]: i for i, sym in enumerate(chem_symbols.split())
+            }
+            self.cutoff = float(extra_dict['cutoff'].decode('utf-8'))
+        elif isinstance(model, AtomGraphSequential):
+            if model.type_map is None:
+                raise ValueError(
+                    'Model must have the type_map to be used with calculator'
+                )
+            if model.cutoff == 0.0:
+                raise ValueError('Model cutoff seems not initialized')
+            model.eval_type_map = torch.tensor(True)  # ?
+            model.set_is_batch_data(False)
+            model_loaded = model
+            self.type_map = model.type_map
+            self.cutoff = model.cutoff
+        else:
+            raise ValueError('Unexpected input combinations')
+
+        if self.cgaanet_config is None and cgaanet_config is not None:
+            self.cgaanet_config = cgaanet_config
+
+        self.model = model_loaded
+
+        self.model.to(self.device)
+        self.model.eval()
+
+        self.implemented_properties = [
+            'time',
+            'free_energy',
+            'energy',
+            'forces',
+            'stress',
+            'energies',
+        ]
+
+    def set_atoms(self, atoms):
+        # called by ase, when atoms.calc = calc
+        zs = tuple(set(atoms.get_atomic_numbers()))
+        type_map = zs
+
+    def calculate(self, atoms=None, properties=None, system_changes=all_changes):
+        # call parent class to set necessary atom attributes
+        Calculator.calculate(self, atoms, properties, system_changes)
+        if atoms is None:
+            raise ValueError('No atoms to evaluate')
+
+        grain_atom_counts = self.cgaanet_config['grain_atom_counts']
+        data = AtomGraphData.from_numpy_dict(
+            unlabeled_atoms_to_graph(atoms, self.cutoff, grain_atom_counts = grain_atom_counts)
+        )
+
+        data.to(self.device)  # type: ignore
+
+        if isinstance(self.model, torch_script_type):
+            data[KEY.NODE_FEATURE] = torch.tensor(
+                [self.type_map[z.item()] for z in data[KEY.NODE_FEATURE]],
+                dtype=torch.int64,
+                device=self.device,
+            )
+            data[KEY.POS].requires_grad_(True)  # backward compatibility
+            data[KEY.RELATIVE_POS].requires_grad_(True)  # backward compatibility
+            data[KEY.EDGE_VEC].requires_grad_(True)  # backward compatibility
+            data = data.to_dict()
+            del data['data_info']
+
+        t1 = time.time()
+        output = self.model(data)
+        t2 = time.time()
+
+        energy = output[KEY.PRED_TOTAL_ENERGY].detach().cpu().item()
+
+        force  = force_to_ase(output)
+        atomic_energy = torch.ones((data['total_atoms'],1),device=self.device) * data[KEY.PRED_TOTAL_ENERGY].detach().cpu().item() / data['total_atoms']
+
+        #print (t2-t1)
+
+        # Store results
+        self.results = {
+            'time': t2-t1,
+            'free_energy': energy,
+            'energy': energy,
+            'energies': (
+                atomic_energy.detach().cpu().reshape(len(atoms)).numpy()
+            ),
+            'forces': force.detach().cpu().numpy(),
+            'stress': np.array(
+                (torch.tensor([0,0,0,0,0,0],device=self.device))
+                .detach()
+                .cpu()
+                .numpy()[[0, 1, 2, 4, 5, 3]]  # as voigt notation
+            ),
+        }

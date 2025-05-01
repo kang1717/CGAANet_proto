@@ -1,0 +1,59 @@
+import argparse
+import os
+
+from cgaanet import __version__
+
+description_get_model = (
+    f'cgaanet version={__version__}, cgaanet_get_model.'
+    + ' Deploy model for LAMMPS from the checkpoint'
+)
+checkpoint_help = (
+    'path to the checkpoint | SevenNet-0 | 7net-0 |'
+    ' {SevenNet-0|7net-0}_{11July2024|22May2024}'
+)
+output_name_help = 'filename prefix'
+get_parallel_help = 'deploy parallel model'
+
+
+def run(args):
+    import cgaanet.util
+    from cgaanet.scripts.deploy import deploy, deploy_parallel
+
+    checkpoint = args.checkpoint
+    output_prefix = args.output_prefix
+    get_parallel = args.get_parallel
+    get_serial = not get_parallel
+
+    if output_prefix is None:
+        output_prefix = (
+            'deployed_parallel' if not get_serial else 'deployed_serial'
+        )
+
+    checkpoint_path = None
+    if os.path.isfile(checkpoint):
+        checkpoint_path = checkpoint
+    else:
+        checkpoint_path = cgaanet.util.pretrained_name_to_path(checkpoint)
+
+    model, config = cgaanet.util.model_from_checkpoint(checkpoint_path)
+    stct_dct = model.state_dict()
+
+    if get_serial:
+        deploy(stct_dct, config, output_prefix)
+    else:
+        deploy_parallel(stct_dct, config, output_prefix)
+
+
+def main():
+    ag = argparse.ArgumentParser(description=description_get_model)
+    ag.add_argument('checkpoint', help=checkpoint_help, type=str)
+    ag.add_argument(
+        '-o', '--output_prefix', nargs='?', help=output_name_help, type=str
+    )
+    ag.add_argument(
+        '-p', '--get_parallel', help=get_parallel_help, action='store_true'
+    )
+
+    args = ag.parse_args()
+
+    run(args)

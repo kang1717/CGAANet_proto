@@ -1,0 +1,7 @@
+[console_scripts]
+cgaanet = cgaanet.main.cgaanet:main
+cgaanet_get_model = cgaanet.main.cgaanet_get_model:main
+cgaanet_graph_build = cgaanet.main.cgaanet_graph_build:main
+cgaanet_inference = cgaanet.main.cgaanet_inference:main
+cgaanet_patch_lammps = cgaanet.main.cgaanet_patch_lammps:main
+cgaanet_preset = cgaanet.main.cgaanet_preset:main
