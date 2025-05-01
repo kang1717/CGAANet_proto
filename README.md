@@ -20,7 +20,7 @@ Only train_v1 is supported.
 cgaanet -m train_v1 input.yaml -s
 ```
 
-### input details
+### Input details
 
 You have to add below keys, which are not included in the SeveNet code:
 
@@ -55,6 +55,10 @@ You have to include grain_num, grain_type, and intra_grain_sequence tag in the e
 from cgaanet.cgaanet_calculator import CGAANetCalculator
 calc = CGAANetCalculator(model='checkpoint_best.pth', device='cuda')
 ```
+
+## Example dataset and input files
+
+See .
 
 ## Citation
 
