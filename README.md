@@ -55,3 +55,6 @@ You have to include grain_num, grain_type, and intra_grain_sequence tag in the e
 from cgaanet.cgaanet_calculator import CGAANetCalculator
 calc = CGAANetCalculator(model='checkpoint_best.pth', device='cuda')
 ```
+
+## Citation
+
