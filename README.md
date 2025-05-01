@@ -27,9 +27,15 @@ You have to add below keys, which are not included in the SeveNet code:
 ```python
 model:
     grain_atom_counts: {1: 1, 2: 7, 3: 10, 4: 15}
+    irreps_manual:                               # Manually set irreps of the model in each layer
+        - "64x0e+64x1o"
+        - "64x0e+64x1o"
+        - "64x0e+64x1o"
     error_record:
         - ['IntraGrainForce', 'RMSE']
 ```
+
+It is mendatory to write irreps_manual. In addition, the first and last irreps should be a combination of 0e and 1o.
 
 Here, grain_atom_counts is the number of atoms in grains.
 
