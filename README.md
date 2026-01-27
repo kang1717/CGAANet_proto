@@ -68,4 +68,4 @@ calc = CGAANetCalculator(model='checkpoint_best.pth', device='cuda')
 See https://doi.org/10.6084/m9.figshare.28914470.v1.
 
 ## Citation
-
+S. Kang. arXiv:2505.01058
